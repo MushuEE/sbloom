@@ -1,0 +1,1899 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Semantic Bloom Filter: A Journey from Bloom to Bust</title>
+
+
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23000'/><circle cx='16' cy='16' r='10' fill='none' stroke='%235eead4' stroke-width='1.2' opacity='0.35'/><line x1='16' y1='16' x2='26' y2='16' stroke='%23a5c4ff' stroke-width='2' stroke-linecap='round' opacity='0.55'/><line x1='16' y1='16' x2='23' y2='9' stroke='%237de3c7' stroke-width='3' stroke-linecap='round'/><circle cx='23' cy='9' r='2.2' fill='%237de3c7'/></svg>">
+  <meta name="theme-color" content="#000000">
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']]
+      },
+      options: { renderActions: { addMenu: [0, '', ''] } }
+    };
+  </script>
+  <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      /* Blossom Theme Palette */
+      --ink: #0a0412; /* Deepest plum */
+      --panel: #150a21; /* Deep plum */
+      --panel2: #201233; /* Medium plum */
+      --panel3: #2b1b45; /* Lighter plum */
+      --line: #3d2b5c; /* Muted plum line */
+      --line-bright: #ff758f; /* Bright blossom pink line */
+      --text: #fceef5; /* Soft white with pink tint */
+      --text-dim: #b5a2c4; /* Muted lavender text */
+      --mute: #6b538a; /* Slate purple */
+      --mute-2: #422f5a;
+      --accent: #ff758f; /* Blossom pink */
+      --accent-soft: #ff4d6d; /* Darker blossom pink */
+      --accent-rgb: 255, 117, 143;
+      --accent-glow: rgba(var(--accent-rgb), 0.14);
+      --ocean: #ffb3c6; /* Soft petal pink */
+      --warn: #ffe494; /* Summer sun yellow */
+      --err: #ff4d6d; /* Bright red/pink */
+      --blue: #a2d2ff; /* Soft summer sky blue */
+
+      
+      /* Canvas palette, read by JS via getComputedStyle */
+      --canvas-bg: #020c1b;
+      --canvas-grid: #112240;
+      --canvas-grid-soft: #0a192f;
+      --canvas-axis: #233554;
+      --canvas-text: #ccd6f6;
+      --canvas-text-dim: #8892b0;
+      --canvas-mute: #495670;
+      --canvas-legend-bg: rgba(2, 12, 27, 0.88);
+      /* Semantic aliases so existing code keeps working */
+      --bg: var(--ink);
+      --bg2: var(--panel2);
+      --card: var(--panel);
+      --card2: var(--panel3);
+      --border: var(--line);
+      --orig: var(--accent);
+      --rot: var(--ocean);
+      --quant: var(--blue);
+      --gold: var(--warn);
+      --red: var(--err);
+    }
+
+    :root[data-theme="light"] {
+      --ink: #f5f7f4;
+      --panel: #ffffff;
+      --panel2: #f2f5f2;
+      --panel3: #e8ece8;
+      --line: #d3ddd7;
+      --line-bright: #a7b9b1;
+      --text: #0f1a17;
+      --text-dim: #42584f;
+      --mute: #72877f;
+      --mute-2: #a7b9b1;
+      --accent: #0e8d72;
+      --accent-soft: #36a68a;
+      --accent-rgb: 14, 141, 114;
+      --accent-glow: rgba(14, 141, 114, 0.12);
+      --ocean: #0d8b98;
+      --warn: #b8860b;
+      --err: #be123c;
+      --blue: #2241b8;
+      --canvas-bg: #fbfcfa;
+      --canvas-grid: #c9d6cf;
+      --canvas-grid-soft: #e4ece6;
+      --canvas-axis: #98a9a1;
+      --canvas-text: #0f1a17;
+      --canvas-text-dim: #42584f;
+      --canvas-mute: #72877f;
+      --canvas-legend-bg: rgba(255, 255, 255, 0.92);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--ink);
+      color: var(--text);
+    }
+
+    body {
+      font-family: "Space Grotesk", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      font-size: 16.5px;
+      line-height: 1.62;
+      background:
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(var(--accent-rgb), 0.04), transparent 60%),
+        var(--ink);
+      background-attachment: fixed;
+    }
+
+    /* Global grid overlay, the signature HUD background */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image:
+        linear-gradient(rgba(var(--accent-rgb), 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(var(--accent-rgb), 0.035) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: radial-gradient(ellipse 70% 80% at 50% 50%, #000 50%, transparent 100%);
+      -webkit-mask-image: radial-gradient(ellipse 70% 80% at 50% 50%, #000 50%, transparent 100%);
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background: repeating-linear-gradient(0deg, rgba(var(--accent-rgb), 0.015) 0 1px, transparent 1px 3px);
+      mix-blend-mode: screen;
+    }
+
+    :root[data-theme="light"] body::before {
+      background-image:
+        linear-gradient(rgba(var(--accent-rgb), 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(var(--accent-rgb), 0.06) 1px, transparent 1px);
+    }
+
+    :root[data-theme="light"] body::after {
+      background: repeating-linear-gradient(0deg, rgba(var(--accent-rgb), 0.03) 0 1px, transparent 1px 3px);
+      mix-blend-mode: multiply;
+    }
+
+    code,
+    .mono,
+    pre {
+      font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    /* Layout */
+    .wrap {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+
+    nav.toc {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      padding: 28px 20px 28px 22px;
+      border-right: 1px solid var(--line);
+      overflow-y: auto;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 88%, transparent) 0%, color-mix(in srgb, var(--panel) 96%, transparent) 100%);
+      backdrop-filter: blur(6px);
+    }
+
+    nav.toc .brand {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      letter-spacing: 0.25em;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    nav.toc .brand-sub {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9.5px;
+      letter-spacing: 0.3em;
+      color: var(--mute);
+      text-transform: uppercase;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    nav.toc h2 {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: var(--mute);
+      font-weight: 500;
+      margin: 0 0 10px 2px;
+    }
+
+    nav.toc ol {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    nav.toc li {
+      position: relative;
+    }
+
+    nav.toc a {
+      display: flex;
+      gap: 12px;
+      padding: 7px 10px;
+      border-left: 2px solid transparent;
+      color: var(--text-dim);
+      text-decoration: none;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px;
+      letter-spacing: 0.03em;
+      line-height: 1.35;
+      text-transform: uppercase;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+
+    nav.toc a .n {
+      color: var(--mute-2);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px;
+      flex: 0 0 28px;
+      padding-top: 1px;
+    }
+
+    nav.toc a:hover {
+      background: rgba(var(--accent-rgb), 0.04);
+      color: var(--accent);
+      border-left-color: var(--accent-soft);
+    }
+
+    nav.toc a:hover .n {
+      color: var(--accent-soft);
+    }
+
+    nav.toc a.active {
+      background: rgba(var(--accent-rgb), 0.07);
+      color: var(--accent);
+      border-left-color: var(--accent);
+    }
+
+    nav.toc a.active .n {
+      color: var(--accent);
+    }
+
+    nav.toc hr {
+      border: none;
+      border-top: 1px dashed var(--line);
+      margin: 20px 0;
+    }
+
+    .theme-toggle {
+      display: inline-block;
+      width: 100%;
+      padding: 7px 10px;
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--line-bright);
+      border-radius: 2px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      cursor: pointer;
+      margin-bottom: 14px;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+
+    .theme-toggle:hover {
+      background: rgba(var(--accent-rgb), 0.06);
+      border-color: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    nav.toc small {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px;
+      letter-spacing: 0.05em;
+      color: var(--mute);
+      text-transform: uppercase;
+      line-height: 1.6;
+    }
+
+    main {
+      padding: 48px 56px 120px 56px;
+      min-width: 0;
+      position: relative;
+    }
+
+    @media (max-width: 900px) {
+      .wrap {
+        grid-template-columns: 1fr;
+      }
+
+      nav.toc {
+        position: static;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--line);
+      }
+
+      main {
+        padding: 24px 18px 80px;
+      }
+    }
+
+    /* Typography */
+    h1 {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 44px;
+      line-height: 1.1;
+      letter-spacing: -0.025em;
+      margin: 0 0 12px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    h1 .accent {
+      background: linear-gradient(90deg, var(--accent) 0%, var(--ocean) 55%, var(--warn) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    h2 {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 30px;
+      line-height: 1.15;
+      letter-spacing: -0.015em;
+      margin: 0 0 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    h3 {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px;
+      margin: 28px 0 10px;
+      color: var(--accent);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+    }
+
+    h3::before {
+      content: "▸ ";
+      color: var(--accent-soft);
+    }
+
+    p {
+      margin: 0 0 14px;
+      color: var(--text);
+    }
+
+    .lede {
+      font-size: 20px;
+      line-height: 1.55;
+      color: var(--text-dim);
+      max-width: 800px;
+    }
+
+    small,
+    .small {
+      font-size: 13.5px;
+      color: var(--text-dim);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.3em;
+      color: var(--accent);
+      font-weight: 500;
+      margin-bottom: 16px;
+      padding: 3px 10px 3px 0;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.15), 0 0 10px var(--accent);
+      animation: pulse 2.4s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.35;
+      }
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px dashed rgba(var(--accent-rgb), 0.3);
+    }
+
+    a:hover {
+      border-bottom-color: var(--accent);
+    }
+
+    hr {
+      border: none;
+      border-top: 1px dashed var(--line);
+      margin: 40px 0;
+    }
+
+    /* Section */
+    section {
+      padding: 72px 0 32px;
+      border-bottom: 1px dashed var(--line);
+      scroll-margin-top: 0;
+      position: relative;
+    }
+
+    section:first-of-type {
+      padding-top: 24px;
+    }
+
+    section:last-of-type {
+      border-bottom: none;
+    }
+
+    /* Panels (cards) with corner brackets */
+    .card,
+    .panel {
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel2) 100%);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      padding: 20px 22px;
+      margin: 16px 0;
+      position: relative;
+    }
+
+    .card::before,
+    .card::after,
+    .panel::before,
+    .panel::after {
+      content: "";
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-color: var(--accent);
+      border-style: solid;
+      pointer-events: none;
+    }
+
+    .card::before,
+    .panel::before {
+      top: -1px;
+      left: -1px;
+      border-width: 1px 0 0 1px;
+    }
+
+    .card::after,
+    .panel::after {
+      top: -1px;
+      right: -1px;
+      border-width: 1px 1px 0 0;
+    }
+
+    .card>i.cbr,
+    .panel>i.cbr {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border-color: var(--accent);
+      border-style: solid;
+      pointer-events: none;
+    }
+
+    .card>i.cbr.bl,
+    .panel>i.cbr.bl {
+      bottom: -1px;
+      left: -1px;
+      border-width: 0 0 1px 1px;
+    }
+
+    .card>i.cbr.br,
+    .panel>i.cbr.br {
+      bottom: -1px;
+      right: -1px;
+      border-width: 0 1px 1px 0;
+    }
+
+    .card.accent {
+      border-top: 1px solid var(--warn);
+    }
+
+    .card.accent::before,
+    .card.accent::after {
+      border-color: var(--warn);
+    }
+
+    .card.accent>i.cbr {
+      border-color: var(--warn);
+    }
+
+    .card.insight {
+      border-top: 1px solid var(--accent);
+      background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.05) 0%, var(--panel2) 80%);
+    }
+
+    .card.caution {
+      border-top: 1px solid var(--err);
+      background: linear-gradient(180deg, rgba(251, 113, 133, 0.05) 0%, var(--panel2) 80%);
+    }
+
+    .card.caution::before,
+    .card.caution::after {
+      border-color: var(--err);
+    }
+
+    .card.caution>i.cbr {
+      border-color: var(--err);
+    }
+
+    /* Panel header used inside cards */
+    .panel-hd {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: -4px 0 12px 0;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--mute);
+      padding-bottom: 8px;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    .panel-hd .tag {
+      color: var(--accent);
+    }
+
+    .panel-hd .stat {
+      color: var(--text-dim);
+    }
+
+    /* Collapsible derivation */
+    details.deriv {
+      margin: 18px 0;
+      border: 1px dashed var(--line);
+      border-radius: 2px;
+      background: rgba(var(--accent-rgb), 0.02);
+    }
+
+    details.deriv>summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 12px 16px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    details.deriv>summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.deriv>summary::before {
+      content: "\25B8  ";
+      color: var(--accent);
+    }
+
+    details.deriv[open]>summary::before {
+      content: "\25BE  ";
+    }
+
+    details.deriv>summary:hover {
+      color: var(--accent);
+    }
+
+    details.deriv[open]>summary {
+      border-bottom: 1px dashed var(--line);
+    }
+
+    details.deriv .deriv-body {
+      padding: 12px 16px 16px;
+    }
+
+    details.deriv .deriv-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Collapsible intuition: slow-paced explainer for readers who want hand-holding.
+       Solid border + sans-serif summary distinguishes from the dashed/monospace `deriv`. */
+    details.intuition {
+      margin: 18px 0;
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--accent);
+      border-radius: 2px;
+      background: rgba(var(--accent-rgb), 0.035);
+    }
+
+    details.intuition>summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 11px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+    }
+
+    details.intuition>summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.intuition>summary::before {
+      content: "\25B8  ";
+      color: var(--accent);
+    }
+
+    details.intuition[open]>summary::before {
+      content: "\25BE  ";
+    }
+
+    details.intuition>summary:hover {
+      color: var(--accent);
+    }
+
+    details.intuition[open]>summary {
+      border-bottom: 1px solid var(--line);
+    }
+
+    details.intuition .intuition-body {
+      padding: 14px 16px 16px;
+      font-size: 13.5px;
+      line-height: 1.6;
+    }
+
+    details.intuition .intuition-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    details.intuition .intuition-body table {
+      margin: 8px 0 12px;
+      font-size: 12.5px;
+    }
+
+    /* Pills */
+    .pill {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 2px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border: 1px solid var(--line-bright);
+      color: var(--text-dim);
+      margin-right: 6px;
+    }
+
+    .pill.orig {
+      color: var(--accent);
+      border-color: rgba(var(--accent-rgb), 0.40);
+      background: rgba(var(--accent-rgb), 0.05);
+    }
+
+    .pill.rot {
+      color: var(--ocean);
+      border-color: rgba(94, 234, 212, 0.40);
+      background: rgba(94, 234, 212, 0.04);
+    }
+
+    .pill.quant {
+      color: var(--blue);
+      border-color: rgba(165, 196, 255, 0.40);
+      background: rgba(165, 196, 255, 0.04);
+    }
+
+    .pill.err {
+      color: var(--err);
+      border-color: rgba(251, 113, 133, 0.40);
+      background: rgba(251, 113, 133, 0.04);
+    }
+
+    .pill.gold {
+      color: var(--warn);
+      border-color: rgba(252, 211, 77, 0.40);
+      background: rgba(252, 211, 77, 0.04);
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px 22px;
+      align-items: center;
+      margin: 10px 0 16px;
+    }
+
+    .ctrl {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--mute);
+    }
+
+    .ctrl label {
+      color: var(--text-dim);
+    }
+
+    .ctrl .val {
+      color: var(--accent);
+      font-family: "JetBrains Mono", monospace;
+      min-width: 40px;
+      text-align: right;
+      padding: 1px 7px;
+      border: 1px solid var(--line);
+      border-radius: 1px;
+      background: rgba(var(--accent-rgb), 0.04);
+      font-size: 11.5px;
+      letter-spacing: 0.03em;
+    }
+
+    input[type=range] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 160px;
+      height: 2px;
+      background: var(--line-bright);
+      border-radius: 0;
+      outline: none;
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      background: var(--accent);
+      cursor: pointer;
+      transform: rotate(45deg);
+      /* diamond */
+      box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.6);
+    }
+
+    input[type=range]::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      background: var(--accent);
+      border: none;
+      cursor: pointer;
+      transform: rotate(45deg);
+      box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.6);
+    }
+
+    button {
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--line-bright);
+      padding: 7px 14px;
+      border-radius: 2px;
+      cursor: pointer;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+
+    button:hover {
+      background: rgba(var(--accent-rgb), 0.06);
+      border-color: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    button.primary:hover {
+      background: rgba(var(--accent-rgb), 0.1);
+    }
+
+    select {
+      background: var(--panel);
+      color: var(--text-dim);
+      border: 1px solid var(--line-bright);
+      padding: 6px 10px;
+      border-radius: 2px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* Plots */
+    .plot {
+      position: relative;
+      background: var(--canvas-bg);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .plot::before,
+    .plot::after {
+      content: "";
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-color: var(--accent-soft);
+      border-style: solid;
+      pointer-events: none;
+    }
+
+    .plot::before {
+      top: 0;
+      left: 0;
+      border-width: 1px 0 0 1px;
+    }
+
+    .plot::after {
+      bottom: 0;
+      right: 0;
+      border-width: 0 1px 1px 0;
+    }
+
+    .plot canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .plot .legend {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      background: var(--canvas-legend-bg);
+      padding: 6px 10px;
+      border-radius: 1px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      color: var(--text-dim);
+      border: 1px solid var(--line);
+    }
+
+    .plot .legend .sw {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    .plot .caption {
+      position: absolute;
+      top: 10px;
+      left: 12px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--mute);
+    }
+
+    .plot .caption .t {
+      color: var(--accent);
+    }
+
+    .plot .hint {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      z-index: 2;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--canvas-bg) 78%, transparent);
+      padding: 3px 8px;
+      border-radius: 2px;
+      border: 1px solid rgba(var(--accent-rgb), 0.35);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .plot.interactive canvas {
+      cursor: grab;
+    }
+
+    .plot.interactive canvas:active {
+      cursor: grabbing;
+    }
+
+    .plot-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .plot-grid.cols-2 {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .plot-grid.cols-3 {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    @media (max-width: 780px) {
+
+      .plot-grid.cols-2,
+      .plot-grid.cols-3 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Metric strip, telemetry readouts */
+    .metrics {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 14px 0;
+    }
+
+    .metric {
+      flex: 1 1 140px;
+      background: linear-gradient(180deg, var(--panel2), var(--panel));
+      border: 1px solid var(--line);
+      border-left: 2px solid var(--accent-soft);
+      border-radius: 0;
+      padding: 10px 14px;
+      position: relative;
+    }
+
+    .metric .label {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.25em;
+      color: var(--mute);
+    }
+
+    .metric .value {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      color: var(--text);
+      margin-top: 3px;
+      letter-spacing: -0.01em;
+    }
+
+    .metric .value.orig {
+      color: var(--accent);
+    }
+
+    .metric .value.rot {
+      color: var(--ocean);
+    }
+
+    .metric .value.quant {
+      color: var(--blue);
+    }
+
+    .metric .value.err {
+      color: var(--err);
+    }
+
+    .metric .value.gold {
+      color: var(--warn);
+    }
+
+    /* Formula block */
+    .formula {
+      background: var(--canvas-bg);
+      border: 1px solid var(--line);
+      border-left: 2px solid var(--accent-soft);
+      border-radius: 0;
+      padding: 14px 18px;
+      margin: 14px 0;
+      overflow-x: auto;
+      position: relative;
+    }
+
+    .formula::before {
+      content: "EQ";
+      position: absolute;
+      top: 6px;
+      right: 10px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      color: var(--mute);
+    }
+
+    .kbd {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 1px;
+      background: var(--panel2);
+      border: 1px solid var(--line-bright);
+      color: var(--accent);
+    }
+
+    /* Hero */
+    header.hero {
+      padding: 20px 0 10px;
+      position: relative;
+    }
+
+    header.hero p.lede {
+      max-width: 820px;
+    }
+
+    .refs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 20px 0 8px;
+    }
+
+    .refs .ref {
+      display: block;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      text-decoration: none;
+      background: linear-gradient(180deg, var(--panel2), var(--panel));
+      flex: 1 1 280px;
+      min-width: 0;
+      position: relative;
+    }
+
+    .refs .ref::before {
+      content: "▸";
+      color: var(--accent-soft);
+      font-size: 11px;
+      position: absolute;
+      top: 12px;
+      right: 12px;
+    }
+
+    .refs .ref .t {
+      color: var(--text);
+      font-weight: 600;
+      font-size: 13.5px;
+      margin-bottom: 4px;
+    }
+
+    .refs .ref .s {
+      color: var(--text-dim);
+      font-size: 10.5px;
+      font-family: "JetBrains Mono", monospace;
+      letter-spacing: 0.05em;
+    }
+
+    .refs .ref:hover {
+      background: rgba(var(--accent-rgb), 0.04);
+      border-color: var(--accent-soft);
+    }
+
+    /* Steps pipeline */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0;
+      margin: 18px 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .steps .step {
+      padding: 14px 14px;
+      border-right: 1px dashed var(--line);
+      position: relative;
+    }
+
+    .steps .step:last-child {
+      border-right: none;
+    }
+
+    .steps .step .n {
+      font-family: "JetBrains Mono", monospace;
+      color: var(--accent);
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+    }
+
+    .steps .step .t {
+      font-weight: 600;
+      font-size: 13.5px;
+      margin: 6px 0 6px;
+      color: var(--text);
+    }
+
+    .steps .step .d {
+      font-size: 11.5px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    @media (max-width: 780px) {
+      .steps {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .steps .step {
+        border-bottom: 1px dashed var(--line);
+      }
+    }
+
+    /* Inline math fallback */
+    .math {
+      font-family: "STIX Two Math", "Cambria Math", serif;
+      font-style: italic;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    th {
+      color: var(--mute);
+      font-weight: 500;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+    }
+
+    td {
+      font-size: 13px;
+    }
+
+    td.mono {
+      font-family: "JetBrains Mono", monospace;
+      color: var(--accent);
+    }
+
+    /* Lineage marker: small, dim, accented left border. Marks content that originates in DRIVE/EDEN. */
+    .lineage-mark {
+      margin: 14px 0;
+      padding: 8px 12px;
+      border-left: 2px solid var(--accent-soft);
+      background: rgba(var(--accent-rgb), 0.04);
+      color: var(--text-dim);
+      font-size: 12.5px;
+      line-height: 1.55;
+    }
+
+    .lineage-mark .lbl {
+      display: inline-block;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9.5px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-right: 8px;
+    }
+
+    .lineage-mark a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px dotted var(--accent-soft);
+    }
+
+    .lineage-mark a:hover {
+      color: var(--ocean);
+    }
+
+    /* Primer mini-demo grid */
+    .primer-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 18px 0;
+    }
+
+    @media (max-width: 860px) {
+      .primer-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .primer-cell {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 2px;
+      padding: 16px 18px;
+      position: relative;
+      scroll-margin-top: 24px;
+    }
+
+    .primer-cell:target {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.15);
+    }
+
+    .primer-cell::before,
+    .primer-cell::after {
+      content: "";
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-color: var(--accent-soft);
+      border-style: solid;
+      pointer-events: none;
+    }
+
+    .primer-cell::before {
+      top: -1px;
+      left: -1px;
+      border-width: 1px 0 0 1px;
+    }
+
+    .primer-cell::after {
+      top: -1px;
+      right: -1px;
+      border-width: 1px 1px 0 0;
+    }
+
+    .primer-cell .pt {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+
+    .primer-cell .ph {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0 0 6px;
+      color: var(--text);
+    }
+
+    .primer-cell .pb {
+      font-size: 14.5px;
+      color: var(--text-dim);
+      line-height: 1.55;
+      margin-bottom: 12px;
+    }
+
+    .primer-cell .plot {
+      height: 240px;
+    }
+
+    .primer-cell>.plot+.controls {
+      margin-top: 12px;
+    }
+
+    .readout {
+      margin-top: 10px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+      letter-spacing: 0.04em;
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .readout b {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .readout .k {
+      color: var(--mute);
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      font-size: 10.5px;
+      margin-right: 4px;
+    }
+
+    .readout.stacked {
+      flex-direction: column;
+      gap: 6px;
+      max-width: 300px;
+    }
+
+    .readout.stacked span {
+      display: flex;
+      justify-content: space-between;
+      background: rgba(255, 255, 255, 0.02);
+      padding: 6px 10px;
+      border-radius: 2px;
+      border: 1px solid var(--line);
+    }
+
+    .readout.stacked .k {
+      margin-right: 0;
+    }
+
+    /* Glossary inline pop, reusable */
+    .gloss {
+      border-bottom: 1px dotted var(--accent-soft);
+      cursor: help;
+      color: var(--accent);
+    }
+
+    /* Status strip (optional) */
+    .status-strip {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--mute);
+      margin: 10px 0 4px;
+    }
+
+    .status-strip .s {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-strip .s::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+    }
+
+    .status-strip .s.warn::before {
+      background: var(--warn);
+      box-shadow: 0 0 6px var(--warn);
+    }
+
+    .status-strip .s.err::before {
+      background: var(--err);
+      box-shadow: 0 0 6px var(--err);
+    }
+
+    /* Mobile-viewport advisory: shown below 900px until dismissed */
+    .mobile-advisory {
+      display: none;
+    }
+
+    @media (max-width: 900px) {
+      .mobile-advisory:not(.dismissed) {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        padding: 10px 14px;
+        background: var(--panel2);
+        border-bottom: 1px solid var(--warn);
+        color: var(--text);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+    }
+
+    .mobile-advisory .icon {
+      color: var(--warn);
+      flex: 0 0 auto;
+      font-weight: 600;
+    }
+
+    .mobile-advisory .msg {
+      flex: 1 1 auto;
+    }
+
+    .mobile-advisory .close {
+      flex: 0 0 auto;
+      background: transparent;
+      border: 1px solid var(--line-bright);
+      color: var(--text-dim);
+      border-radius: 4px;
+      padding: 2px 8px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+    }
+
+    .mobile-advisory .close:hover {
+      color: var(--text);
+      border-color: var(--text-dim);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="mobile-advisory" class="mobile-advisory" role="status">
+    <span class="icon">▲</span>
+    <span class="msg">Best viewed on a desktop browser. The interactive demos rely on drag, hover, and a wide
+      viewport.</span>
+    <button class="close" id="mobile-advisory-close" aria-label="Dismiss advisory">Dismiss</button>
+  </div>
+  <script>
+    (function () {
+      var bar = document.getElementById('mobile-advisory');
+      if (!bar) return;
+      if (sessionStorage.getItem('tq-mobile-advisory-dismissed') === '1') {
+        bar.classList.add('dismissed');
+      }
+      document.getElementById('mobile-advisory-close').addEventListener('click', function () {
+        bar.classList.add('dismissed');
+        try { sessionStorage.setItem('tq-mobile-advisory-dismissed', '1'); } catch (e) { }
+      });
+    })();
+  </script>
+  <div class="wrap">
+
+    <nav class="toc">
+      <div class="brand">◈ BLOSSOM</div>
+      <ol>
+        <li><a href="#hero"><span class="n">▸</span><span>Introduction</span></a></li>
+        <li><a href="#problem"><span class="n">§1</span><span>The Problem</span></a></li>
+        <li><a href="#attempt1"><span class="n">§2</span><span>Brute Force Lua</span></a></li>
+        <li><a href="#attempt2"><span class="n">§3</span><span>Multi-Index Hashing</span></a></li>
+        <li><a href="#attempt3"><span class="n">§4</span><span>In-Memory LSH</span></a></li>
+        <li><a href="#analysis"><span class="n">§5</span><span>LSH Probability Analysis</span></a></li>
+      </ol>
+
+
+      <hr>
+      <button id="theme-toggle" class="theme-toggle" aria-label="Toggle colour theme">Light mode</button>
+      <small>Every chart is live. Numbers are computed in your browser.</small>
+    </nav>
+
+    <main>
+
+      <!-- ======================= HERO ======================= -->
+      <header class="hero" id="hero">
+        <div class="eyebrow">Probabilistic Search: Fast Negative Gates</div>
+        <h1>Semantic Bloom Filter:&nbsp;<span class="accent">A Journey from Bloom to Bust</span></h1>
+
+
+        <p class="lede">
+          Traditional Bloom Filters work for exact matches. Semantic Bloom Filters extend this to high-dimensional vector spaces, allowing for fast, probabilistic negative lookups to protect expensive databases.
+        </p>
+        <div class="refs">
+          <div class="ref" style="cursor: default; background: linear-gradient(180deg, var(--panel2), var(--panel));">
+            <div class="t">@gmccloskey Workspace</div>
+            <div class="s">May 2026 · Evolution of a Semantic Bloom Filter</div>
+          </div>
+        </div>
+      </header>
+
+
+      <div class="card insight" style="margin-top: 30px;">
+        <div class="panel-hd">
+          <span class="tag">Project Summary</span>
+          <span class="stat">Lua vs MIH vs LSH</span>
+        </div>
+        <p>
+          <strong>What we did</strong>: We explored three approaches to avoid heavy database queries for misses:
+          <br>
+          1. <strong>Brute Force Lua</strong>: Slow and blocking.
+          <br>
+          2. <strong>Multi-Index Hashing</strong>: Fast but too strict for loose similarity.
+          <br>
+          3. <strong>In-Memory LSH</strong>: Pure in-app gate, but introduces false positives when reducing false negatives.
+        </p>
+        
+        <h3 style="margin-top: 15px;">Key Takeaway</h3>
+        <p class="small" style="color: var(--text-dim);">
+          There is no free lunch. To capture loose semantic similarity without full scans, you must accept either higher memory usage (HNSW) or false positives/negatives (LSH).
+        </p>
+      </div>
+
+
+      <section id="problem">
+        <div class="eyebrow">§1 · The Problem</div>
+        <h2>The Cost of Semantic Search</h2>
+        <p class="lede">
+          Traditional caching mechanisms fail for semantic queries. We need a fast negative gate.
+        </p>
+        <div class="panel">
+          <div class="panel-hd"><span class="tag">■ CHALLENGE</span><span class="stat">Vector DB overhead</span></div>
+          <p>
+            Checking a Vector DB for every query introduces latency and infrastructure cost, even when the query is a miss.
+            We need a <b>Semantic Bloom Filter</b> to say "definitely no match" in microseconds.
+
+          </p>
+        </div>
+      </section>
+
+      <section id="attempt1">
+        <div class="eyebrow">§2 · Attempt 1</div>
+        <h2>Brute Force Lua in Redis</h2>
+        <p class="lede">
+          Scanning all keys in a Lua script blocks Redis.
+        </p>
+        <div class="panel caution">
+          <div class="panel-hd"><span class="tag">■ FAILURE</span><span class="stat">O(N) and Blocking</span></div>
+          <p>
+            Using <code>KEYS</code> in Lua freezes the single-threaded Redis event loop. It scales linearly with the number of vectors.
+          </p>
+        </div>
+      </section>
+
+      <section id="attempt2">
+        <div class="eyebrow">§3 · Attempt 2</div>
+        <h2>Multi-Index Hashing (MIH)</h2>
+        <p class="lede">
+          Breaking bitstrings into blocks for O(1) lookup.
+        </p>
+        <div class="panel insight">
+          <div class="panel-hd"><span class="tag">■ LESSON</span><span class="stat">Too strict for loose similarity</span></div>
+          <p>
+            MIH achieved ~500x speedup! But for 0.78 similarity, too many bits flip, and no blocks match exactly.
+          </p>
+        </div>
+
+        <div class="panel">
+          <div class="panel-hd"><span class="tag">■ SIMULATION</span><span class="stat">Quantization & Bucket Mapping</span></div>
+          <p>
+            See how a string is converted into bits and mapped to buckets.
+          </p>
+          
+          <div class="controls">
+            <div class="ctrl">
+              <label>Input Text:</label>
+              <select id="sim-input" style="background: var(--panel2); color: var(--text); border: 1px solid var(--line); padding: 4px;">
+                <option value="cats">Why do cats like the sun?</option>
+                <option value="dogs">Why does my dog cry at the door</option>
+              </select>
+            </div>
+            <button id="btn-simulate" class="theme-toggle" style="width: auto; margin-left: 10px;">Simulate</button>
+          </div>
+          
+          <div id="sim-output" style="margin-top: 20px; display: none;">
+            <div class="step">
+              <h3>Step 1: Continuous Embedding (Simulated Floats)</h3>
+              <div class="mono" style="font-size: 11px; word-break: break-all; color: var(--text-dim); background: var(--panel2); padding: 10px;" id="vec-floats"></div>
+            </div>
+            
+            <div class="step" style="margin-top: 15px;">
+              <h3>Step 2: Binary Quantization (Sign Bit)</h3>
+              <div class="mono" style="font-size: 11px; word-break: break-all; color: var(--accent); background: var(--panel2); padding: 10px;" id="vec-bits"></div>
+            </div>
+            
+            <div class="step" style="margin-top: 15px;">
+              <h3>Step 3: Multi-Index Blocks & Buckets</h3>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px;" id="grid-buckets">
+                <!-- Blocks will be inserted here -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <section id="attempt3">
+        <div class="eyebrow">§4 · Attempt 3</div>
+        <h2>In-Memory LSH Bloom Filter</h2>
+        <p class="lede">
+          Moving the gate into application memory.
+        </p>
+        <div class="panel">
+          <div class="panel-hd"><span class="tag">■ TRADE-OFF</span><span class="stat">False Positives vs False Negatives</span></div>
+          <p>
+            LSH maps similar vectors to the same buckets. To avoid missing matches (False Negatives), we make the filter looser, which increases False Positives.
+          </p>
+          <div id="lsh-viz" style="width:100%; height:300px; background:var(--panel); margin-top:10px;">
+            <canvas id="lshCanvas" width="600" height="300"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section id="analysis">
+        <div class="eyebrow">§5 · LSH Probability Analysis</div>
+        <h2>Tuning False Positives & Negatives</h2>
+        <p class="lede">
+          The choice of number of tables and planes per table dictates the filter's accuracy.
+        </p>
+        
+        <div class="panel">
+          <div class="panel-hd"><span class="tag">■ MATH</span><span class="stat">Probability Breakdown</span></div>
+          <p>
+            Assuming a bit flip rate of 21% (typical for 0.78 cosine similarity in our test):
+          </p>
+          
+          <table style="width:100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; color: var(--text);">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--line); text-align: left;">
+                <th style="padding: 8px;">Configuration</th>
+                <th style="padding: 8px;">Example String (Similarity)</th>
+                <th style="padding: 8px;">Match Prob (Per Table)</th>
+                <th style="padding: 8px;">Overall Match Prob</th>
+                <th style="padding: 8px;">False Negative Rate</th>
+                <th style="padding: 8px;">False Positive Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- 1 Table, 16 Planes -->
+              <tr style="border-bottom: 1px dotted var(--line); color: var(--text-dim);">
+                <td style="padding: 8px;">1 Table, 16 Planes</td>
+                <td style="padding: 8px;">"Why is my cat..." (0.78)</td>
+                <td style="padding: 8px;">~2.5%</td>
+                <td style="padding: 8px;">~2.5%</td>
+                <td style="padding: 8px;">~97.5%</td>
+                <td style="padding: 8px;">~0.01%</td>
+              </tr>
+              <tr style="border-bottom: 1px dotted var(--line); color: var(--warn);">
+                <td style="padding: 8px;">1 Table, 16 Planes</td>
+                <td style="padding: 8px;">"Why do cats love..." (0.95)</td>
+                <td style="padding: 8px;">~18.5%</td>
+                <td style="padding: 8px;">~18.5%</td>
+                <td style="padding: 8px;">~81.5%</td>
+                <td style="padding: 8px;">~0.01%</td>
+              </tr>
+              
+              <!-- 2 Tables, 8 Planes -->
+              <tr style="border-bottom: 1px dotted var(--line); color: var(--text-dim);">
+                <td style="padding: 8px;">2 Tables, 8 Planes</td>
+                <td style="padding: 8px;">"Why is my cat..." (0.78)</td>
+                <td style="padding: 8px;">~15%</td>
+                <td style="padding: 8px;">~27.7%</td>
+                <td style="padding: 8px;">~72.3%</td>
+                <td style="padding: 8px;">~2.5%</td>
+              </tr>
+              <tr style="border-bottom: 1px dotted var(--line); color: var(--warn);">
+                <td style="padding: 8px;">2 Tables, 8 Planes</td>
+                <td style="padding: 8px;">"Why do cats love..." (0.95)</td>
+                <td style="padding: 8px;">~43%</td>
+                <td style="padding: 8px;">~67.5%</td>
+                <td style="padding: 8px;">~32.5%</td>
+                <td style="padding: 8px;">~2.5%</td>
+              </tr>
+              
+              <!-- 10 Tables, 8 Planes -->
+              <tr style="border-bottom: 1px dotted var(--line); color: var(--text-dim);">
+                <td style="padding: 8px;">10 Tables, 8 Planes</td>
+                <td style="padding: 8px;">"Why is my cat..." (0.78)</td>
+                <td style="padding: 8px;">~15%</td>
+                <td style="padding: 8px;">~80.3%</td>
+                <td style="padding: 8px;">~19.7%</td>
+                <td style="padding: 8px;">~12.1%</td>
+              </tr>
+              <tr style="border-bottom: 1px dotted var(--line); color: var(--warn);">
+                <td style="padding: 8px;">10 Tables, 8 Planes</td>
+                <td style="padding: 8px;">"Why do cats love..." (0.95)</td>
+                <td style="padding: 8px;">~43%</td>
+                <td style="padding: 8px;"><b>~99.6%</b></td>
+                <td style="padding: 8px;"><b>~0.4%</b></td>
+                <td style="padding: 8px;">~12.1%</td>
+              </tr>
+
+              
+              <!-- 8 Tables, 4 Planes -->
+              <tr style="border-bottom: 1px dotted var(--line); color: var(--text-dim);">
+                <td style="padding: 8px;">8 Tables, 4 Planes</td>
+                <td style="padding: 8px;">"Why is my cat..." (0.78)</td>
+                <td style="padding: 8px;">~39%</td>
+                <td style="padding: 8px;"><b>~98%</b></td>
+                <td style="padding: 8px;"><b>~2%</b></td>
+                <td style="padding: 8px;"><b>~61%</b></td>
+              </tr>
+              <tr style="border-bottom: 1px dotted var(--line); color: var(--warn);">
+                <td style="padding: 8px;">8 Tables, 4 Planes</td>
+                <td style="padding: 8px;">"Why do cats love..." (0.95)</td>
+                <td style="padding: 8px;">~65.6%</td>
+                <td style="padding: 8px;"><b>~99.9%</b></td>
+                <td style="padding: 8px;"><b>~0.02%</b></td>
+                <td style="padding: 8px;"><b>~61%</b></td>
+              </tr>
+            </tbody>
+
+
+          </table>
+          <p style="margin-top: 10px;" class="small">
+            Note: While the 8 tables / 4 planes config has a low False Negative rate, it introduces a high False Positive rate (~61% for highly dissimilar queries like the Dog example).
+          </p>
+          
+          <div class="card accent" style="margin-top: 20px;">
+            <div class="panel-hd">
+              <span class="tag">■ KEY INSIGHT</span>
+              <span class="stat">The Cost Asymmetry Principle</span>
+            </div>
+            <p>
+              In a production Semantic Cache, the costs of errors are asymmetric:
+            </p>
+            <ul style="color: var(--text-dim); font-size: 14px;">
+              <li><strong>False Positive (Cheap)</strong>: Checking the cache unnecessarily costs microseconds and fractions of a cent.</li>
+              <li><strong>False Negative (Expensive)</strong>: Skipping the cache and doing a full LLM inference costs seconds and actual dollars.</li>
+            </ul>
+            <p style="margin-top: 10px;">
+              Therefore, we optimize to <b>minimize False Negatives</b>. The 8 tables / 4 planes configuration is highly viable because it guarantees we almost never miss a cache hit, while still filtering out ~39% of unnecessary lookups.
+            </p>
+            <p class="small" style="margin-top: 10px; border-left: 2px solid var(--warn); padding-left: 8px;">
+              <strong>Update Cost</strong>: Adding a new vector to this LSH filter is extremely cheap ($O(1)$ local memory operations), avoiding the heavy compute required to update HNSW or IVF indexes.
+            </p>
+            <p class="small" style="margin-top: 10px; border-left: 2px solid var(--accent); padding-left: 8px;">
+              <strong>Future Work (Eviction)</strong>: Bloom filters don't support deletion. To handle cache eviction in production, we propose exploring **Cuckoo Filters** as a replacement to support deletion natively.
+            </p>
+          </div>
+
+        </div>
+
+
+        <div class="panel">
+          <div class="panel-hd"><span class="tag">■ COMPARISON</span><span class="stat">sbloom vs Production Vector DB</span></div>
+          <p>
+            Comparison of our in-memory LSH Bloom Filter against a production-grade Vector DB (like Pinecone or Redis Search HNSW) at 0.95 similarity.
+          </p>
+          
+          <table style="width:100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; color: var(--text);">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--line); text-align: left;">
+                <th style="padding: 8px;">Metric</th>
+                <th style="padding: 8px;">sbloom (In-Memory LSH)</th>
+                <th style="padding: 8px;">Production Vector DB (HNSW)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-bottom: 1px dotted var(--line);">
+                <td style="padding: 8px;"><strong>Lookup Latency</strong></td>
+                <td style="padding: 8px;">&lt; 1 ms</td>
+                <td style="padding: 8px;">10 - 50 ms</td>
+              </tr>
+              <tr style="border-bottom: 1px dotted var(--line);">
+                <td style="padding: 8px;"><strong>Viability (0.95 Sim)</strong></td>
+                <td style="padding: 8px;">High (99%+ recall)</td>
+                <td style="padding: 8px;">Perfect (100% recall)</td>
+              </tr>
+              <tr style="border-bottom: 1px dotted var(--line);">
+                <td style="padding: 8px;"><strong>False Positive Rate</strong></td>
+                <td style="padding: 8px;">~2.5% (at 2 tables/8 planes)</td>
+                <td style="padding: 8px;">0% (Exact distance)</td>
+              </tr>
+              <tr style="border-bottom: 1px dotted var(--line);">
+                <td style="padding: 8px;"><strong>Infra Cost</strong></td>
+                <td style="padding: 8px;">$0 (In-App RAM)</td>
+                <td style="padding: 8px;">$$$ (Dedicated cluster)</td>
+              </tr>
+            </tbody>
+          </table>
+          <p style="margin-top: 10px;" class="small">
+            *Note: Latency excludes embedding generation time, which is required for both methods.
+          </p>
+        </div>
+      </section>
+
+    </main>
+
+  </div>
+
+
+  <script>
+    const canvas = document.getElementById('lshCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        const r = 100;
+        
+        // Draw circle
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+        ctx.strokeStyle = '#ffb3c6'; // --ocean in blossom theme
+        ctx.stroke();
+        
+        // Draw random planes (lines)
+        ctx.strokeStyle = '#ff758f'; // --accent in blossom theme
+        ctx.setLineDash([5, 5]);
+        for (let i = 0; i < 4; i++) {
+            const angle = (i * Math.PI) / 4;
+            ctx.beginPath();
+            ctx.moveTo(cx - r * Math.cos(angle), cy - r * Math.sin(angle));
+            ctx.lineTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle));
+            ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        
+        // Draw points
+        ctx.fillStyle = '#ffe494'; // --warn in blossom theme
+        for (let i = 0; i < 10; i++) {
+            const angle = Math.random() * 2 * Math.PI;
+            const dist = Math.random() * r;
+            const px = cx + dist * Math.cos(angle);
+            const py = cy + dist * Math.sin(angle);
+            ctx.beginPath();
+            ctx.arc(px, py, 4, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    }
+    draw();
+
+    // --- Simulation JS ---
+    const btnSimulate = document.getElementById('btn-simulate');
+    const simOutput = document.getElementById('sim-output');
+    const simInput = document.getElementById('sim-input');
+    const vecFloats = document.getElementById('vec-floats');
+    const vecBits = document.getElementById('vec-bits');
+    const gridBuckets = document.getElementById('grid-buckets');
+    
+    const fakeData = {
+        cats: {
+            floats: [0.12, -0.45, 0.78, -0.11, 0.34, -0.99, 0.05, -0.67, 0.88, -0.23, 0.45, -0.12],
+            bits: "101010101010"
+        },
+        dogs: {
+            floats: [-0.32, 0.15, -0.68, 0.21, -0.54, 0.89, -0.15, 0.57, -0.78, 0.13, -0.55, 0.02],
+            bits: "010101010101"
+        }
+    };
+    
+    btnSimulate.addEventListener('click', () => {
+        const selected = simInput.value;
+        const data = fakeData[selected];
+        
+        simOutput.style.display = 'block';
+        
+        // Show floats
+        vecFloats.textContent = "[" + data.floats.map(f => f.toFixed(2)).join(", ") + ", ...]";
+        
+        // Show bits
+        vecBits.textContent = data.bits + "...";
+        
+        // Show buckets (simulate 4 blocks)
+        gridBuckets.innerHTML = '';
+        for (let i = 0; i < 4; i++) {
+            const blockVal = data.bits.substring(i*3, (i+1)*3);
+            const div = document.createElement('div');
+            div.className = 'card';
+            div.innerHTML = `
+                <div class="panel-hd"><span class="tag">Block ${i+1}</span></div>
+                <div class="mono" style="font-size: 11px; color: var(--accent);">${blockVal}</div>
+                <div class="small" style="color: var(--text-dim); margin-top: 5px;">Bucket: hash(${blockVal})</div>
+            `;
+            gridBuckets.appendChild(div);
+        }
+    });
+
+  </script>
+</body>
+</html>
