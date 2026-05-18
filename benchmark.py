@@ -49,7 +49,8 @@ def run_benchmark():
 
     start_time = time.time()
     for i in range(n_vectors):
-        sbf.add(f"v{i}", vectors[i])
+        sbf.add_mih(f"v{i}", vectors[i])
+
     pop_time = time.time() - start_time
 
     end_mem = int(redis_client.info("memory")["used_memory"])
@@ -89,6 +90,22 @@ def run_benchmark():
     lua_total_time = time.time() - start_time
     lua_qps = n_queries / lua_total_time
 
+    # 4. Benchmark check_mih
+    print("Benchmarking check_mih...")
+    mih_latencies = []
+    mih_hits = 0
+
+    start_time = time.time()
+    for i in range(n_queries):
+        q_start = time.time()
+        scores = sbf.check_mih(queries[i])
+        mih_latencies.append(time.time() - q_start)
+        if scores:
+            mih_hits += 1
+    mih_total_time = time.time() - start_time
+    mih_qps = n_queries / mih_total_time
+
+
     # Calculate percentiles
     def get_percentiles(latencies):
         l_ms = [l * 1000 for l in latencies]
@@ -100,6 +117,8 @@ def run_benchmark():
 
     app_stats = get_percentiles(app_latencies)
     lua_stats = get_percentiles(lua_latencies)
+    mih_stats = get_percentiles(mih_latencies)
+
 
     # Estimate payload sizes
     # App side: fetches all keys (SCAN) + pipeline GETs for all keys.
@@ -116,18 +135,19 @@ def run_benchmark():
     print(f"Queries: {n_queries}")
     print(f"Target Similarity: {target_similarity}")
     print("-" * 40)
-    print(f"{'Metric':<25} {'App-side':<15} {'Lua-side':<15}")
-    print("-" * 40)
-    print(f"{'Queries per Second (QPS)':<25} {app_qps:<15.2f} {lua_qps:<15.2f}")
+    print(f"{'Metric':<25} {'App-side':<15} {'Lua-side':<15} {'MIH-side':<15}")
+    print("-" * 70)
+    print(f"{'Queries per Second (QPS)':<25} {app_qps:<15.2f} {lua_qps:<15.2f} {mih_qps:<15.2f}")
     print(
-        f"{'Avg Latency (ms)':<25} {app_stats['avg']:<15.2f} {lua_stats['avg']:<15.2f}"
+        f"{'Avg Latency (ms)':<25} {app_stats['avg']:<15.2f} {lua_stats['avg']:<15.2f} {mih_stats['avg']:<15.2f}"
     )
     print(
-        f"{'P95 Latency (ms)':<25} {app_stats['p95']:<15.2f} {lua_stats['p95']:<15.2f}"
+        f"{'P95 Latency (ms)':<25} {app_stats['p95']:<15.2f} {lua_stats['p95']:<15.2f} {mih_stats['p95']:<15.2f}"
     )
     print(
-        f"{'P99 Latency (ms)':<25} {app_stats['p99']:<15.2f} {lua_stats['p99']:<15.2f}"
+        f"{'P99 Latency (ms)':<25} {app_stats['p99']:<15.2f} {lua_stats['p99']:<15.2f} {mih_stats['p99']:<15.2f}"
     )
+
     print("-" * 40)
     print(f"Total Network Payload Size Differences (Estimated):")
     print(f"  App-side: ~{app_payload_est} per query (fetches all data)")
@@ -137,7 +157,8 @@ def run_benchmark():
     print(f"Total Redis memory used: {mem_used / 1024 / 1024:.2f} MB")
     print("=" * 40)
 
-    print(f"Hits: App={app_hits}, Lua={lua_hits}")
+    print(f"Hits: App={app_hits}, Lua={lua_hits}, MIH={mih_hits}")
+
 
 
 if __name__ == "__main__":

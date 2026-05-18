@@ -86,7 +86,65 @@ class SemanticBloomFilter:
         key = f"{self.prefix}{vector_id}"
         self.redis.set(key, packed)
 
+    def add_mih(self, vector_id: str, vector_floats: np.ndarray):
+        """Quantizes and stores the vector in Redis using Multi-Index Hashing."""
+        packed = binary_quantize(vector_floats)
+        
+        num_blocks = 16
+        block_size = (self.dimension // 8) // num_blocks
+
+        
+        for i in range(num_blocks):
+            start = i * block_size
+            end = start + block_size
+            block = packed[start:end]
+            
+            # Store in Redis Set
+            # Key: sbloom:mih:block:{i}:{block_hex}
+            key = f"sbloom:mih:block:{i}:{block.hex()}"
+            self.redis.sadd(key, vector_id)
+            
+        # Also store the full vector for verification
+        key = f"{self.prefix}{vector_id}"
+        self.redis.set(key, packed)
+
+
+    def check_mih(self, query_floats: np.ndarray) -> dict:
+        """Checks for similar vectors using Multi-Index Hashing and returns scores.
+        
+        Returns a dict mapping vector_id to the fraction of matching blocks (match/total).
+        """
+        query_packed = binary_quantize(query_floats)
+        
+        num_blocks = 16
+        block_size = (self.dimension // 8) // num_blocks
+
+        
+        # Pipeline SMEMBERS to get candidates from all matching blocks
+        pipe = self.redis.pipeline()
+        for i in range(num_blocks):
+            start = i * block_size
+            end = start + block_size
+            block = query_packed[start:end]
+            key = f"sbloom:mih:block:{i}:{block.hex()}"
+            pipe.smembers(key)
+            
+        results = pipe.execute()
+        
+        # Count frequencies of each candidate
+        from collections import Counter
+        counts = Counter()
+        for res in results:
+            if res:
+                for vid in res:
+                    counts[vid.decode('utf-8')] += 1
+                    
+        # Convert to scores (match/total)
+        scores = {vid: count / num_blocks for vid, count in counts.items()}
+        return scores
+
     def check_via_app(self, query_floats: np.ndarray, target_cosine_similarity: float) -> bool:
+
         """Checks for similar vectors in Python after fetching all from Redis."""
         query_packed = binary_quantize(query_floats)
         threshold = self._compute_threshold(target_cosine_similarity)
