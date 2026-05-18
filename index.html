@@ -1624,6 +1624,36 @@
           <div id="lsh-viz" style="width:100%; height:300px; background:var(--panel); margin-top:10px;">
             <canvas id="lshCanvas" width="600" height="300"></canvas>
           </div>
+
+        <div class="panel">
+          <div class="panel-hd"><span class="tag">■ INTERACTIVE</span><span class="stat">LSH Projections & Signatures</span></div>
+          <p>
+            Drag the query vector to see how its bit signature changes as it crosses random planes. Close vectors share signatures!
+          </p>
+          
+          <div style="display: flex; gap: 20px; align-items: center; margin-top: 10px;">
+            <div id="lsh-interactive-viz" style="width:300px; height:300px; background:var(--panel2); border: 1px solid var(--line);">
+              <canvas id="interactiveLshCanvas" width="300" height="300"></canvas>
+            </div>
+            
+            <div style="flex: 1;">
+              <div class="card" style="margin: 0;">
+                <div class="panel-hd"><span class="tag">Stored Vector</span></div>
+                <div class="mono" style="font-size: 14px; color: var(--text-dim);" id="stored-sig">0000</div>
+              </div>
+              <div class="card accent" style="margin: 10px 0 0 0;">
+                <div class="panel-hd"><span class="tag">Query Vector (Draggable)</span></div>
+                <div class="mono" style="font-size: 14px; color: var(--accent);" id="query-sig">0000</div>
+              </div>
+              <div style="margin-top: 10px; font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600;">
+                Similarity: <span id="sim-val" style="color: var(--warn);">1.00</span>
+              </div>
+              <div style="margin-top: 5px; font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600;">
+                Match: <span id="match-status" style="color: var(--accent);">YES</span>
+              </div>
+            </div>
+          </div>
+        </div>
         </div>
       </section>
 
@@ -1894,6 +1924,144 @@
         }
     });
 
+
+    // --- Interactive LSH JS ---
+    const intCanvas = document.getElementById('interactiveLshCanvas');
+    const intCtx = intCanvas.getContext('2d');
+    
+    const storedSigEl = document.getElementById('stored-sig');
+    const querySigEl = document.getElementById('query-sig');
+    const simValEl = document.getElementById('sim-val');
+    const matchStatusEl = document.getElementById('match-status');
+    
+    const cx = intCanvas.width / 2;
+    const cy = intCanvas.height / 2;
+    const r = 80;
+    
+    // Fixed stored vector
+    const storedVec = { x: cx + r * Math.cos(0.5), y: cy + r * Math.sin(0.5) };
+    // Draggable query vector
+    const queryVec = { x: cx + r * Math.cos(1.0), y: cy + r * Math.sin(1.0) };
+    
+    // Fixed angles for planes for demo
+    const planes = [0.2, 1.2, 2.2, 3.2];
+    
+    let isDragging = false;
+    
+    intCanvas.addEventListener('mousedown', (e) => {
+        const rect = intCanvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        // Check if click is near query vector handle
+        const dist = Math.sqrt((mx - queryVec.x)**2 + (my - queryVec.y)**2);
+        if (dist < 15) {
+            isDragging = true;
+        }
+    });
+    
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const rect = intCanvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        
+        // Constrain to circle
+        const dx = mx - cx;
+        const dy = my - cy;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        queryVec.x = cx + (dx / dist) * r;
+        queryVec.y = cy + (dy / dist) * r;
+        
+        updateAndDraw();
+    });
+    
+    window.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
+    
+    function getSignature(vec) {
+        const dx = vec.x - cx;
+        const dy = vec.y - cy;
+        let sig = "";
+        for (let i = 0; i < planes.length; i++) {
+            const angle = planes[i];
+            // Normal to plane
+            const val = dx * (-Math.sin(angle)) + dy * Math.cos(angle);
+            sig += val > 0 ? "1" : "0";
+        }
+        return sig;
+    }
+    
+    function updateAndDraw() {
+        intCtx.clearRect(0, 0, intCanvas.width, intCanvas.height);
+        
+        // Draw circle
+        intCtx.beginPath();
+        intCtx.arc(cx, cy, r, 0, 2 * Math.PI);
+        intCtx.strokeStyle = '#3d2b5c'; // --line
+        intCtx.stroke();
+        
+        // Draw planes
+        intCtx.strokeStyle = '#ff758f'; // --accent
+        intCtx.setLineDash([2, 2]);
+        for (let i = 0; i < planes.length; i++) {
+            const angle = planes[i];
+            intCtx.beginPath();
+            intCtx.moveTo(cx - r * Math.cos(angle), cy - r * Math.sin(angle));
+            intCtx.lineTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle));
+            intCtx.stroke();
+        }
+        intCtx.setLineDash([]);
+        
+        // Draw stored vector
+        intCtx.beginPath();
+        intCtx.moveTo(cx, cy);
+        intCtx.lineTo(storedVec.x, storedVec.y);
+        intCtx.strokeStyle = '#b5a2c4'; // --text-dim
+        intCtx.lineWidth = 2;
+        intCtx.stroke();
+        intCtx.lineWidth = 1;
+        
+        // Draw query vector
+        intCtx.beginPath();
+        intCtx.moveTo(cx, cy);
+        intCtx.lineTo(queryVec.x, queryVec.y);
+        intCtx.strokeStyle = '#ff758f'; // --accent
+        intCtx.lineWidth = 2;
+        intCtx.stroke();
+        intCtx.lineWidth = 1;
+        
+        // Draw handle for query vector
+        intCtx.beginPath();
+        intCtx.arc(queryVec.x, queryVec.y, 6, 0, 2 * Math.PI);
+        intCtx.fillStyle = '#ff758f';
+        intCtx.fill();
+        
+        // Signatures
+        const storedSig = getSignature(storedVec);
+        const querySig = getSignature(queryVec);
+        
+        storedSigEl.textContent = storedSig;
+        querySigEl.textContent = querySig;
+        
+        // Cosine Similarity
+        const dx1 = storedVec.x - cx;
+        const dy1 = storedVec.y - cy;
+        const dx2 = queryVec.x - cx;
+        const dy2 = queryVec.y - cy;
+        const cosSim = (dx1*dx2 + dy1*dy2) / (r*r);
+        simValEl.textContent = cosSim.toFixed(2);
+        
+        if (storedSig === querySig) {
+            matchStatusEl.textContent = "YES (Match)";
+            matchStatusEl.style.color = "#ff758f"; // --accent
+        } else {
+            matchStatusEl.textContent = "NO (Miss)";
+            matchStatusEl.style.color = "#ff4d6d"; // --err
+        }
+    }
+    
+    updateAndDraw();
   </script>
 </body>
 </html>
